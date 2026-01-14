@@ -1,59 +1,107 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>附近景點搜尋地圖</title>
+    <title>周邊探索地圖 Pro</title>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; font-family: "Microsoft JhengHei", sans-serif; }
-        #map { height: 88vh; width: 100%; }
-        /* 上方控制列樣式 */
-        #controls { 
-            height: 12vh; 
-            background: #333; 
-            color: white; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            padding: 0 10px; 
-            box-sizing: border-box;
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", sans-serif; background: #f0f0f0; }
+        
+        /* 地圖滿版 */
+        #map { height: 100vh; width: 100%; z-index: 1; }
+
+        /* 懸浮控制面板 */
+        #controls-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
         }
+
+        /* 第一排：輸入框與按鈕 */
+        .input-group { display: flex; gap: 8px; }
+        
         input[type="text"] {
-            padding: 8px;
-            border-radius: 5px;
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        /* 按鈕美化 */
+        .btn {
             border: none;
-            width: 120px;
-            margin-right: 5px;
-            font-size: 16px;
+            padding: 0 15px;
+            border-radius: 8px;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.2s;
         }
-        .btn { 
-            background: #007bff; 
-            border: none; 
-            padding: 8px 15px; 
-            border-radius: 5px; 
-            color: white; 
-            font-weight: bold; 
-            cursor: pointer; 
-            font-size: 16px;
+        .btn:active { opacity: 0.8; }
+        .btn-search { background: linear-gradient(135deg, #007bff, #0056b3); }
+        .btn-loc { background: linear-gradient(135deg, #28a745, #1e7e34); }
+
+        /* 第二排：範圍滑桿 */
+        .range-group { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #555; }
+        input[type="range"] { flex: 1; margin: 0 10px; }
+
+        /* 讀取動畫遮罩 */
+        #loader {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 2000;
+            display: none; justify-content: center; align-items: center; flex-direction: column; color: white;
         }
-        .btn-loc { background: #ff9800; margin-left: 5px; }
-        #status { font-size: 12px; margin-top: 5px; position: absolute; top: 10vh; left: 0; right: 0; text-align: center; color: yellow; text-shadow: 1px 1px 2px black; pointer-events: none; z-index: 1000;}
+        .spinner {
+            border: 5px solid #f3f3f3; border-top: 5px solid #ff9800;
+            border-radius: 50%; width: 40px; height: 40px;
+            animation: spin 1s linear infinite; margin-bottom: 10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* 狀態列 */
+        #status-bar {
+            text-align: center; font-size: 12px; color: #666; margin-top: 5px;
+        }
     </style>
 </head>
 <body>
 
-    <div id="controls">
-        <input type="text" id="keyword" value="夜市" placeholder="輸入關鍵字">
-        <button class="btn" onclick="searchCurrentLocation()">搜尋</button>
-        <button class="btn btn-loc" onclick="getLocation()">定位</button>
+    <div id="loader">
+        <div class="spinner"></div>
+        <div id="loader-text">搜尋中...</div>
     </div>
-    <div id="status">請允許定位權限...</div>
+
+    <div id="controls-container">
+        <div class="input-group">
+            <input type="text" id="keyword" value="夜市" placeholder="例如: 加油站">
+            <button class="btn btn-search" onclick="searchCurrentLocation()">搜尋</button>
+            <button class="btn btn-loc" onclick="getLocation()">定位</button>
+        </div>
+        <div class="range-group">
+            <span>範圍: <span id="range-val">3</span> km</span>
+            <input type="range" id="radius" min="1" max="10" value="3" oninput="updateRangeLabel()">
+        </div>
+        <div id="status-bar">準備就緒，請點擊定位</div>
+    </div>
+
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 初始化地圖
         var map = L.map('map').setView([25.0330, 121.5654], 13);
         var userMarker = null;
         var markers = [];
@@ -61,66 +109,71 @@
         var currentLon = null;
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
+            attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // 網頁載入後自動定位
+        // 啟動時自動定位
         getLocation();
 
+        function updateRangeLabel() {
+            document.getElementById("range-val").innerText = document.getElementById("radius").value;
+        }
+
+        function toggleLoader(show, text="處理中...") {
+            var loader = document.getElementById("loader");
+            document.getElementById("loader-text").innerText = text;
+            loader.style.display = show ? "flex" : "none";
+        }
+
         function getLocation() {
-            var status = document.getElementById("status");
+            toggleLoader(true, "正在取得 GPS 位置...");
             if (navigator.geolocation) {
-                status.innerHTML = "正在定位中...";
                 navigator.geolocation.getCurrentPosition(showPosition, showError);
             } else {
-                status.innerHTML = "瀏覽器不支援定位。";
+                toggleLoader(false);
+                alert("瀏覽器不支援定位");
             }
         }
 
         function showPosition(position) {
             currentLat = position.coords.latitude;
             currentLon = position.coords.longitude;
-            document.getElementById("status").innerHTML = "定位成功！";
-
-            // 移動地圖
+            toggleLoader(false);
+            
+            document.getElementById("status-bar").innerText = "定位成功！";
             map.setView([currentLat, currentLon], 14);
 
-            // 標示使用者 (紅色)
             if (userMarker) map.removeLayer(userMarker);
             var redIcon = new L.Icon({
                 iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
                 shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
                 iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
             });
-            userMarker = L.marker([currentLat, currentLon], {icon: redIcon}).addTo(map).bindPopup("您在這裡").openPopup();
-
-            // 定位後直接執行一次預設搜尋
+            userMarker = L.marker([currentLat, currentLon], {icon: redIcon}).addTo(map).bindPopup("您目前位置").openPopup();
+            
+            // 定位後自動搜尋一次
             searchCurrentLocation();
         }
 
-        // 按下搜尋按鈕執行的功能
         function searchCurrentLocation() {
-            if (currentLat === null || currentLon === null) {
-                alert("尚未取得定位，請先點擊「定位」按鈕");
+            if (currentLat === null) {
+                alert("請先定位！");
                 return;
             }
-            // 抓取輸入框裡的文字
             var key = document.getElementById("keyword").value;
+            var radiusKm = document.getElementById("radius").value;
+            var radiusMeters = radiusKm * 1000;
+
             if(!key) { alert("請輸入關鍵字"); return; }
             
-            findNearbyPlaces(currentLat, currentLon, key);
-        }
+            toggleLoader(true, `正在搜尋半徑 ${radiusKm}km 內的 ${key}...`);
 
-        function findNearbyPlaces(lat, lon, keyword) {
-            document.getElementById("status").innerHTML = "正在搜尋 " + keyword + "...";
-            
-            // 使用 Overpass API 搜尋關鍵字
-            // around:5000 代表半徑 5000 公尺
             var query = `
-                [out:json];
+                [out:json][timeout:25];
                 (
-                  node["name"~"${keyword}"](around:5000, ${lat}, ${lon});
-                  way["name"~"${keyword}"](around:5000, ${lat}, ${lon});
+                  node["name"~"${key}"](around:${radiusMeters}, ${currentLat}, ${currentLon});
+                  way["name"~"${key}"](around:${radiusMeters}, ${currentLat}, ${currentLon});
+                  relation["name"~"${key}"](around:${radiusMeters}, ${currentLat}, ${currentLon});
                 );
                 out center;
             `;
@@ -129,12 +182,12 @@
             fetch(url)
             .then(response => response.json())
             .then(data => {
-                // 清除舊標記
                 markers.forEach(m => map.removeLayer(m));
                 markers = [];
 
                 if (data.elements.length === 0) {
-                    document.getElementById("status").innerHTML = "附近 5 公里內找不到「" + keyword + "」。";
+                    document.getElementById("status-bar").innerText = "範圍內找不到結果";
+                    toggleLoader(false);
                     return;
                 }
 
@@ -143,20 +196,34 @@
                     var mLon = element.lon || element.center.lon;
                     var name = element.tags.name;
                     
+                    // 計算距離
+                    var dist = map.distance([currentLat, currentLon], [mLat, mLon]);
+                    var distStr = dist < 1000 ? Math.round(dist) + " 公尺" : (dist/1000).toFixed(1) + " 公里";
+
                     var marker = L.marker([mLat, mLon]).addTo(map)
-                        .bindPopup(`<b>${name}</b><br><a href="https://www.google.com/maps/dir/?api=1&destination=${mLat},${mLon}" target="_blank">Google 導航</a>`);
+                        .bindPopup(`
+                            <div style="text-align:center">
+                                <b style="font-size:16px">${name}</b><br>
+                                <span style="color:#666; font-size:12px">距離：${distStr}</span><br>
+                                <a href="https://www.google.com/maps/dir/?api=1&destination=${mLat},${mLon}" target="_blank" style="display:inline-block; margin-top:8px; background:#4285F4; color:white; text-decoration:none; padding:5px 10px; border-radius:4px;">Google 導航</a>
+                            </div>
+                        `);
                     markers.push(marker);
                 });
-                document.getElementById("status").innerHTML = `找到 ${data.elements.length} 個 ${keyword}！`;
+                
+                document.getElementById("status-bar").innerText = `搜尋完成，找到 ${data.elements.length} 個地點`;
+                toggleLoader(false);
             })
             .catch(error => {
                 console.error(error);
-                document.getElementById("status").innerHTML = "搜尋失敗，請檢查網路。";
+                toggleLoader(false);
+                alert("搜尋失敗，請檢查網路或稍後再試");
             });
         }
 
         function showError(error) {
-            document.getElementById("status").innerHTML = "定位失敗，請確認權限。";
+            toggleLoader(false);
+            alert("定位失敗，請檢查手機權限");
         }
     </script>
 </body>
