@@ -1,17 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>周邊探索地圖 Pro</title>
+    <title>周邊探索地圖 Pro+</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", sans-serif; background: #f0f0f0; }
         
-        /* 地圖滿版 */
         #map { height: 100vh; width: 100%; z-index: 1; }
 
-        /* 懸浮控制面板 */
         #controls-container {
             position: absolute;
             top: 10px;
@@ -27,7 +25,6 @@
             gap: 10px;
         }
 
-        /* 第一排：輸入框與按鈕 */
         .input-group { display: flex; gap: 8px; }
         
         input[type="text"] {
@@ -39,7 +36,6 @@
             outline: none;
         }
 
-        /* 按鈕美化 */
         .btn {
             border: none;
             padding: 0 15px;
@@ -49,17 +45,13 @@
             font-size: 14px;
             cursor: pointer;
             white-space: nowrap;
-            transition: opacity 0.2s;
         }
-        .btn:active { opacity: 0.8; }
         .btn-search { background: linear-gradient(135deg, #007bff, #0056b3); }
         .btn-loc { background: linear-gradient(135deg, #28a745, #1e7e34); }
 
-        /* 第二排：範圍滑桿 */
         .range-group { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #555; }
         input[type="range"] { flex: 1; margin: 0 10px; }
 
-        /* 讀取動畫遮罩 */
         #loader {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.5); z-index: 2000;
@@ -72,7 +64,6 @@
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* 狀態列 */
         #status-bar {
             text-align: center; font-size: 12px; color: #666; margin-top: 5px;
         }
@@ -93,7 +84,7 @@
         </div>
         <div class="range-group">
             <span>範圍: <span id="range-val">3</span> km</span>
-            <input type="range" id="radius" min="1" max="10" value="3" oninput="updateRangeLabel()">
+            <input type="range" id="radius" min="0.5" max="10" step="0.5" value="3" oninput="updateLabel()" onchange="onRangeChange()">
         </div>
         <div id="status-bar">準備就緒，請點擊定位</div>
     </div>
@@ -105,6 +96,7 @@
         var map = L.map('map').setView([25.0330, 121.5654], 13);
         var userMarker = null;
         var markers = [];
+        var rangeCircle = null; // 用來儲存範圍圓圈
         var currentLat = null;
         var currentLon = null;
 
@@ -112,11 +104,44 @@
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // 啟動時自動定位
         getLocation();
 
-        function updateRangeLabel() {
+        function updateLabel() {
             document.getElementById("range-val").innerText = document.getElementById("radius").value;
+        }
+
+        // 當滑桿「放開」時觸發
+        function onRangeChange() {
+            if (currentLat === null) return;
+            
+            // 1. 更新圓圈視覺
+            drawRangeCircle();
+            
+            // 2. 自動縮放地圖以符合圓圈大小
+            if (rangeCircle) {
+                map.fitBounds(rangeCircle.getBounds());
+            }
+
+            // 3. 自動執行搜尋
+            searchCurrentLocation();
+        }
+
+        function drawRangeCircle() {
+            if (currentLat === null) return;
+            
+            var radiusKm = document.getElementById("radius").value;
+            var radiusMeters = radiusKm * 1000;
+
+            // 如果圓圈已經存在，就移除舊的
+            if (rangeCircle) map.removeLayer(rangeCircle);
+
+            // 畫新的圓圈
+            rangeCircle = L.circle([currentLat, currentLon], {
+                color: '#2196F3',       // 藍色邊框
+                fillColor: '#2196F3',   // 藍色填充
+                fillOpacity: 0.1,       // 透明度 (0.1 很淡，不會擋住地圖)
+                radius: radiusMeters
+            }).addTo(map);
         }
 
         function toggleLoader(show, text="處理中...") {
@@ -141,8 +166,8 @@
             toggleLoader(false);
             
             document.getElementById("status-bar").innerText = "定位成功！";
-            map.setView([currentLat, currentLon], 14);
-
+            
+            // 標示使用者
             if (userMarker) map.removeLayer(userMarker);
             var redIcon = new L.Icon({
                 iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
@@ -151,8 +176,8 @@
             });
             userMarker = L.marker([currentLat, currentLon], {icon: redIcon}).addTo(map).bindPopup("您目前位置").openPopup();
             
-            // 定位後自動搜尋一次
-            searchCurrentLocation();
+            // 定位成功後，先畫圓圈並搜尋
+            onRangeChange(); 
         }
 
         function searchCurrentLocation() {
@@ -166,7 +191,10 @@
 
             if(!key) { alert("請輸入關鍵字"); return; }
             
-            toggleLoader(true, `正在搜尋半徑 ${radiusKm}km 內的 ${key}...`);
+            toggleLoader(true, `搜尋半徑 ${radiusKm}km 內的 ${key}...`);
+
+            // 確保圓圈是最新的
+            drawRangeCircle();
 
             var query = `
                 [out:json][timeout:25];
@@ -182,6 +210,7 @@
             fetch(url)
             .then(response => response.json())
             .then(data => {
+                // 清除舊的「地點標記」，但保留「圓圈」和「使用者」
                 markers.forEach(m => map.removeLayer(m));
                 markers = [];
 
@@ -196,7 +225,6 @@
                     var mLon = element.lon || element.center.lon;
                     var name = element.tags.name;
                     
-                    // 計算距離
                     var dist = map.distance([currentLat, currentLon], [mLat, mLon]);
                     var distStr = dist < 1000 ? Math.round(dist) + " 公尺" : (dist/1000).toFixed(1) + " 公里";
 
@@ -205,25 +233,25 @@
                             <div style="text-align:center">
                                 <b style="font-size:16px">${name}</b><br>
                                 <span style="color:#666; font-size:12px">距離：${distStr}</span><br>
-                                <a href="https://www.google.com/maps/dir/?api=1&destination=${mLat},${mLon}" target="_blank" style="display:inline-block; margin-top:8px; background:#4285F4; color:white; text-decoration:none; padding:5px 10px; border-radius:4px;">Google 導航</a>
+                                <a href="http://googleusercontent.com/maps.google.com/?q=${mLat},${mLon}" target="_blank" style="display:inline-block; margin-top:8px; background:#4285F4; color:white; text-decoration:none; padding:5px 10px; border-radius:4px;">Google 導航</a>
                             </div>
                         `);
                     markers.push(marker);
                 });
                 
-                document.getElementById("status-bar").innerText = `搜尋完成，找到 ${data.elements.length} 個地點`;
+                document.getElementById("status-bar").innerText = `找到 ${data.elements.length} 個地點`;
                 toggleLoader(false);
             })
             .catch(error => {
                 console.error(error);
                 toggleLoader(false);
-                alert("搜尋失敗，請檢查網路或稍後再試");
+                alert("搜尋失敗，請檢查網路");
             });
         }
 
         function showError(error) {
             toggleLoader(false);
-            alert("定位失敗，請檢查手機權限");
+            alert("定位失敗");
         }
     </script>
 </body>
