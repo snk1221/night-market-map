@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>附近夜市地圖</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: "Microsoft JhengHei", sans-serif; }
+        #map { height: 90vh; width: 100%; }
+        #info { height: 10vh; background: #333; color: white; display: flex; align-items: center; justify-content: center; font-size: 14px; text-align: center; padding: 0 10px; }
+        .btn { background: #ff9800; border: none; padding: 5px 15px; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; margin-left: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="info">
+        <span id="status">正在等待 GPS 訊號...</span>
+        <button class="btn" onclick="getLocation()">重新定位</button>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map').setView([25.0330, 121.5654], 13); // 預設台北
+        var userMarker = null;
+        var markers = [];
+
+        // 加入 OpenStreetMap 圖資
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // 啟動時自動抓位置
+        getLocation();
+
+        function getLocation() {
+            var status = document.getElementById("status");
+            if (navigator.geolocation) {
+                status.innerHTML = "正在定位中...";
+                navigator.geolocation.getCurrentPosition(showPosition, showError);
+            } else {
+                status.innerHTML = "您的瀏覽器不支援地理定位。";
+            }
+        }
+
+        function showPosition(position) {
+            var lat = position.coords.latitude;
+            var lon = position.coords.longitude;
+            document.getElementById("status").innerHTML = "定位成功！正在搜尋附近夜市...";
+
+            // 1. 移動地圖到使用者位置
+            map.setView([lat, lon], 14);
+
+            // 2. 標示使用者位置 (紅色)
+            if (userMarker) map.removeLayer(userMarker);
+            var redIcon = new L.Icon({
+                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+            });
+            userMarker = L.marker([lat, lon], {icon: redIcon}).addTo(map).bindPopup("您在這裡").openPopup();
+
+            // 3. 搜尋附近夜市 (使用 Overpass API)
+            findNearbyNightMarkets(lat, lon);
+        }
+
+        function findNearbyNightMarkets(lat, lon) {
+            // 搜尋半徑 5000公尺內，名稱包含 "夜市" 的地點
+            var query = `
+                [out:json];
+                (
+                  node["name"~"夜市"](around:5000, ${lat}, ${lon});
+                  way["name"~"夜市"](around:5000, ${lat}, ${lon});
+                );
+                out center;
+            `;
+            var url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
+
+            fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                // 清除舊標記
+                markers.forEach(m => map.removeLayer(m));
+                markers = [];
+
+                if (data.elements.length === 0) {
+                    document.getElementById("status").innerHTML = "附近 5 公里內沒有找到夜市。";
+                    return;
+                }
+
+                // 標示找到的夜市
+                data.elements.forEach(element => {
+                    var mLat = element.lat || element.center.lat;
+                    var mLon = element.lon || element.center.lon;
+                    var name = element.tags.name;
+                    
+                    // 建立藍色標記
+                    var marker = L.marker([mLat, mLon]).addTo(map)
+                        .bindPopup(`<b>${name}</b><br><a href="https://www.google.com/maps/search/?api=1&query=${name}" target="_blank">用 Google Maps 導航</a>`);
+                    markers.push(marker);
+                });
+                document.getElementById("status").innerHTML = `找到 ${data.elements.length} 個夜市！`;
+            })
+            .catch(error => {
+                console.error(error);
+                document.getElementById("status").innerHTML = "搜尋失敗，請檢查網路。";
+            });
+        }
+
+        function showError(error) {
+            var msg = "";
+            switch(error.code) {
+                case error.PERMISSION_DENIED: msg = "您拒絕了定位權限。"; break;
+                case error.POSITION_UNAVAILABLE: msg = "無法取得位置資訊。"; break;
+                case error.TIMEOUT: msg = "定位請求逾時。"; break;
+                default: msg = "發生未知錯誤。"; break;
+            }
+            document.getElementById("status").innerHTML = msg;
+        }
+    </script>
+</body>
+</html>
